@@ -1,0 +1,113 @@
+import logging
+from telegram import Update, ReplyKeyboardMarkup, Poll
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+
+# লগিং সেটআপ (ত্রুটি বা সমস্যা ধরার জন্য)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+# ডেমো ডেটাবেজ (বাস্তব কাজের জন্য SQLite বা MongoDB ব্যবহার করা ভালো)
+users_db = {}  # {user_id: {"points": 0, "referred_by": None}}
+affiliate_links = {} # {vendor_id: "link_url"}
+
+# ১. স্টার্ট কমান্ড এবং মেনু
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    user_id = user.id
+    
+    # ইউজার ট্র্যাক করা (রেফারেল চেক)
+    if user_id not in users_db:
+        # যদি কেউ রেফারেল লিঙ্কের মাধ্যমে আসে (যেমন: t.me/bot?start=12345)
+        if context.args:
+            try:
+                referrer_id = int(context.args[0])
+                if referrer_id != user_id and referrer_id in users_db:
+                    users_db[user_id] = {"points": 0, "referred_by": referrer_id}
+                    users_db[referrer_id]["points"] += 10  # সফল রেফারেলে ১০ পয়েন্ট বোনাস
+                    await context.bot.send_message(chat_id=referrer_id, text=f"🎉 আপনার লিঙ্কের মাধ্যমে একজন নতুন ইউজার যুক্ত হয়েছেন! আপনি ১০ পয়েন্ট পেয়েছেন।")
+            except ValueError:
+                pass
+        
+        if user_id not in users_db:
+            users_db[user_id] = {"points": 0, "referred_by": None}
+
+    # কাস্টম কিবোর্ড মেনু
+    reply_keyboard = [
+        ['🔗 আমার অ্যাফিলিয়েট লিঙ্ক', '💰 আমার ব্যালেন্স/পয়েন্ট'],
+        ['📊 চলমান পোল', '📢 কন্টেন্ট ও অ্যাপ লিঙ্ক']
+    ]
+    markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    
+    await update.message.reply_text(
+        f"হ্যালো {user.first_name}!\nমাল্টিভেন্ডর অ্যাফিলিয়েট ও কমিউনিটি ম্যানেজমেন্ট বটে আপনাকে স্বাগতম। নিচের মেনু থেকে অপশন বেছে নিন:",
+        reply_markup=markup
+    )
+
+# ২. অ্যাফিলিয়েট লিঙ্ক জেনারেটর
+async def get_affiliate_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    # বটের ইউজারনেম অনুযায়ী ইউনিক রেফারেল লিঙ্ক তৈরি
+    bot_username = context.bot.username
+    ref_link = f"https://t.me/{bot_username}?start={user_id}"
+    
+    await update.message.reply_text(
+        f"🤝 **আপনার ইউনিক অ্যাফিলিয়েট লিঙ্ক:**\n{ref_link}\n\nএই লিঙ্কটি শেয়ার করুন। কেউ এই লিঙ্কের মাধ্যমে বটে ঢুকলে আপনি পয়েন্ট বা কমিশন পাবেন।"
+    )
+
+# ৩. ব্যালেন্স বা পয়েন্ট চেক
+async def check_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    points = users_db.get(user_id, {}).get("points", 0)
+    await update.message.reply_text(f"💰 **আপনার বর্তমান পয়েন্ট ব্যালেন্স:** {points} পয়েন্ট।")
+
+# ৪. পোলিং সিস্টেম (অ্যাডমিন বা ইউজারদের জন্য)
+async def send_poll_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    questions = ["আজকের কন্টেন্ট কেমন লেগেছে?", "দারুণ", "মোটামুটি", "আরও ভালো করা দরকার"]
+    await context.bot.send_poll(
+        chat_id=update.effective_chat.id,
+        question=questions[0],
+        options=questions[1:],
+        is_anonymous=False, # কুইজ বা ডাটা কালেকশনের জন্য অ্যানোনিমাস ফলস করা ভালো
+        allows_multiple_answers=False
+    )
+
+# ৫. অ্যাপ বা কন্টেন্ট শেয়ারিং
+async def share_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # এখানে আপনি আপনার অ্যাপের লিঙ্ক বা যেকোনো মিডিয়া ফাইল দিতে পারেন
+    app_text = (
+        "📢 **আমাদের পার্টনার অ্যাপস এবং কন্টেন্ট:**\n\n"
+        "🌐 [ভেন্ডর অ্যাপ ১](https://example.com/app1) - এখানে ক্লিক করে ডাইরেক্ট অ্যাপে প্রবেশ করুন।\n"
+        "🛒 [ভেন্ডর স্টোর ২](https://example.com/app2) - নতুন প্রোডাক্ট কালেকশন দেখুন।"
+    )
+    await update.message.reply_text(app_text, parse_mode="Markdown", disable_web_page_preview=False)
+
+# মেনু টেক্সট হ্যান্ডলার
+async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text
+    if text == '🔗 আমার অ্যাফিলিয়েট লিঙ্ক':
+        await get_affiliate_link(update, context)
+    elif text == '💰 আমার ব্যালেন্স/পয়েন্ট':
+        await check_balance(update, context)
+    elif text == '📊 চলমান পোল':
+        await send_poll_command(update, context)
+    elif text == '📢 কন্টেন্ট ও অ্যাপ লিঙ্ক':
+        await share_content(update, context)
+
+def main():
+    # ⚠️ BotFather থেকে পাওয়া আপনার টোকেনটি এখানে বসান
+    TOKEN = "8961426395:AAE-vePUK_5lTlzGylOQxsv4RmDJh9jhD3M"
+    
+    app = ApplicationBuilder().token(TOKEN).build()
+    
+    # হ্যান্ডলার যুক্ত করা
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("poll", send_poll_command))
+    app.add_handler(CommandHandler("apps", share_content))
+    
+    # কিবোর্ড মেনুর মেসেজ প্রসেস করার জন্য
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu))
+    
+    print("বটটি সফলভাবে চালু হয়েছে...")
+    app.run_polling()
+
+if __name__ == '__main__':
+    main()
